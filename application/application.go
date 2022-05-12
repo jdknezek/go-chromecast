@@ -969,13 +969,13 @@ func (a *Application) loadAndServeFiles(filenames []string, contentType string, 
 		// attempt to use that
 		contentTypeToUse := contentType
 		if contentType != "" {
-		} else if knownFileType {
-			// If this is a media file we know the chromecast can play,
-			// then we don't need to transcode it.
-			contentTypeToUse, _ = a.possibleContentType(filename)
-			if a.castPlayableContentType(contentTypeToUse) {
-				transcodeFile = false
-			}
+		// } else if knownFileType {
+		// 	// If this is a media file we know the chromecast can play,
+		// 	// then we don't need to transcode it.
+		// 	contentTypeToUse, _ = a.possibleContentType(filename)
+		// 	if a.castPlayableContentType(contentTypeToUse) {
+		// 		transcodeFile = false
+		// 	}
 		} else if transcodeFile {
 			contentTypeToUse = "video/mp4"
 		}
@@ -1109,11 +1109,29 @@ func (a *Application) startStreamingServer() error {
 }
 
 func (a *Application) serveLiveStreaming(w http.ResponseWriter, r *http.Request, filename string) {
-	cmd := exec.Command(
+	symlink := "input" + path.Ext(filename)
+	defer os.Remove(symlink)
+
+	if err := os.Remove(symlink); err != nil && !os.IsNotExist(err) {
+		log.WithField("package", "application").WithFields(log.Fields{
+			"symlink": symlink,
+		}).WithError(err).Error("error removing old symlink")
+	}
+
+	if err := os.Symlink(filename, symlink); err != nil {
+		log.WithField("package", "application").WithFields(log.Fields{
+			"filename": filename,
+			"symlink":  symlink,
+		}).WithError(err).Error("error symlinking")
+	}
+
+	cmd := exec.CommandContext(
+		r.Context(),
 		"ffmpeg",
-		"-re", // encode at 1x playback speed, to not burn the CPU
-		"-i", filename,
-		"-vcodec", "h264",
+		"-hwaccel", "auto",
+		"-i", symlink,
+		"-vf", "subtitles="+symlink,
+		"-vcodec", "hevc_amf",
 		"-acodec", "aac",
 		"-ac", "2", // chromecasts don't support more than two audio channels
 		"-f", "mp4",
